@@ -1,9 +1,10 @@
 """This module contains the Streamlit app for the Typesense Vector Store Action"""
 
-import os
+import json
+from io import BytesIO
 
-from jvclient.client.lib.utils import call_action_walker_exec
-from jvclient.client.lib.widgets import app_header, app_update_action
+from jvclient.client.lib.utils import call_action_walker_exec, jac_yaml_dumper
+from jvclient.client.lib.widgets import app_controls, app_header, app_update_action
 
 import streamlit as st
 
@@ -14,56 +15,150 @@ import yaml
 
 def render(router: StreamlitRouter, agent_id: str, action_id: str, info: dict) -> None:
     """
-    Renders the app for the Typesense Vector Store Action.
+    Renders a paginated list of documents.
 
-    :param router: The StreamlitRouter instance.
     :param agent_id: The agent ID.
     :param action_id: The action ID.
-    :param info: A dictionary containing additional information.
+    :param info: Additional information.
     """
-
     (model_key, module_root) = app_header(agent_id, action_id, info)
 
     with st.expander("Import Knodes", False):
+        # User chooses between inputting YAML/JSON text or uploading a file
+        knode_source = st.radio(
+            "Choose data source:",
+            ("Text input", "Upload file"),
+            key=f"{model_key}_knode_source",
+        )
 
-        knode_data = st.text_area(
-            "Agent Knodes in YAML or JSON",
-            value="",
-            height=170,
-            key=f"{model_key}_knode_data",
+        data_to_import = ""
+        if knode_source == "Text input":
+            data_to_import = st.text_area(
+                "Agent Knodes in YAML or JSON",
+                value="",
+                height=170,
+                key=f"{model_key}_knode_data",
+            )
+
+        uploaded_file = None
+        if knode_source == "Upload file":
+            uploaded_file = st.file_uploader(
+                "Upload file (YAML or JSON)",
+                type=["yaml", "json"],
+                key=f"{model_key}_agent_knode_upload",
+            )
+
+        embeddings = st.toggle(
+            "Import with Embeddings",
+            value=True,
+            key=f"{model_key}_import_embeddings_json",
         )
 
         if st.button("Import", key=f"{model_key}_btn_import_knodes"):
-            # Call the function to import
-            if result := call_action_walker_exec(
-                agent_id, module_root, "import_knodes", {"data": knode_data}
-            ):
-                st.success("Agent knode imported successfully")
+            if uploaded_file:
+                # Read the contents of the uploaded file
+                file_content = uploaded_file.read().decode("utf-8")
+
+                # Determine if it's YAML or JSON and parse accordingly
+                try:
+                    if uploaded_file.type == "application/json":
+                        data_to_import = json.loads(file_content)  # parsed JSON object
+                    else:
+                        data_to_import = yaml.safe_load(
+                            file_content
+                        )  # parsed YAML object
+
+                    if data_to_import is None:
+                        st.error("File is empty or invalid.")
+
+                except Exception as e:
+                    st.error(f"Error loading file: {e}")
+
+            if data_to_import:
+                # Call the function to import with parsed data (either JSON or YAML object)
+                if result := call_action_walker_exec(
+                    agent_id,
+                    module_root,
+                    "import_knodes",
+                    {"data": data_to_import, "embeddings": embeddings},
+                ):
+                    st.success("Agent knode imported successfully")
+                else:
+                    st.error(
+                        "Failed to import knodes. Ensure that the descriptor is in valid YAML or JSON format."
+                    )
             else:
                 st.error(
-                    "Failed to import agent. Ensure that the  descriptor is in valid YAML format."
+                    "No data to import. Please provide valid text or upload a valid file."
                 )
 
-            uploaded_file = st.file_uploader(
-                "Upload file", key=f"{model_key}_agent_knode_upload"
+    with st.expander("Export Knodes", False):
+        export_json = st.toggle(
+            "Export as JSON", value=True, key=f"{model_key}_export_json"
+        )
+        embeddings = st.toggle(
+            "Export with Embeddings",
+            value=True,
+            key=f"{model_key}_export_embeddings_json",
+        )
+
+        # Toggle label adjustment
+        toggle_label = "Export as JSON" if export_json else "Export as YAML"
+        st.caption(f"**{toggle_label} enabled**")
+
+        if st.button("Export", key=f"{model_key}_btn_export_knodes"):
+            # Prepare parameters
+            params = {"export_json": export_json, "embeddings": embeddings}
+
+            # Call the function to export memory
+            result = call_action_walker_exec(
+                agent_id, module_root, "export_knodes", params
             )
 
-            if uploaded_file is not None:
+            # Log results and provide download options
+            if result:
+                st.success("Agent memory exported successfully!")
 
-                loaded_config = yaml.safe_load(uploaded_file)
-                if loaded_config:
-                    st.write(loaded_config)
-                    if call_action_walker_exec(
-                        agent_id, module_root, "import_knodes", {"data": knode_data}
-                    ):
-                        st.success("Agent knode imported successfully")
-                    else:
-                        st.error(
-                            "Failed to import agent knode. Ensure that you are uploading a valid YAML file"
-                        )
+                # Process the first two entries of memory
+                knode_entries = result
+                if export_json:
+
+                    # Prepare downloadable JSON file
+                    json_data = json.dumps(result, indent=4)
+
+                    json_file = BytesIO(json_data.encode("utf-8"))
+                    st.download_button(
+                        label="Download JSON File",
+                        data=json_file,
+                        file_name="exported_knodes.json",
+                        mime="application/json",
+                        key="download_json",
+                    )
+
+                    # JSON display
+                    st.json(knode_entries)
 
                 else:
-                    st.error("File is invalid. Please upload a valid YAML file")
+                    # full memory dump
+                    full_yaml_data = jac_yaml_dumper(data=result, sort_keys=False)
+
+                    # Prepare downloadable YAML file
+                    yaml_file = BytesIO(full_yaml_data.encode("utf-8"))
+                    st.download_button(
+                        label="Download YAML File",
+                        data=yaml_file,
+                        file_name="exported_knodes.yaml",
+                        mime="application/x-yaml",
+                        key="download_yaml",
+                    )
+
+                    # YAML display
+                    st.code(knode_entries, language="yaml")
+
+            else:
+                st.error(
+                    "Failed to export knodes. Please check your inputs and try again."
+                )
 
     # Initialize page state
     if "page" not in st.session_state:
@@ -71,61 +166,13 @@ def render(router: StreamlitRouter, agent_id: str, action_id: str, info: dict) -
 
     # Host Configuration
     with st.expander("Typesense Configuration"):
-        # Add fields for Typesense and OpenAI configurations
-        st.session_state[model_key]["typesense_host"] = st.text_input(
-            "Typesense Host",
-            value=st.session_state[model_key].get(
-                "host", os.environ.get("TYPESENSE_HOST", "typesense")
-            ),
-        )
-        st.session_state[model_key]["typesense_port"] = st.text_input(
-            "Typesense Port",
-            value=st.session_state[model_key].get(
-                "port", os.environ.get("TYPESENSE_PORT", "8108")
-            ),
-        )
-        st.session_state[model_key]["typesense_protocol"] = st.text_input(
-            "Typesense Protocol",
-            value=st.session_state[model_key].get(
-                "protocol", os.environ.get("TYPESENSE_PROTOCOL", "http")
-            ),
-        )
-        st.session_state[model_key]["typesense_api_key"] = st.text_input(
-            "Typesense API Key",
-            value=st.session_state[model_key].get(
-                "api_key", os.environ.get("TYPESENSE_API_KEY", "abcd")
-            ),
-            type="password",
-        )  # Hide API key
-        st.session_state[model_key]["typesense_api_key_name"] = st.text_input(
-            "Typesense API Key Name",
-            value=st.session_state[model_key].get("api_key_name", "typesense_key"),
-        )
-        st.session_state[model_key]["openai_api_key"] = st.text_input(
-            "OpenAI API Key",
-            value=st.session_state[model_key].get("openai_api_key", ""),
-            type="password",
-        )  # Hide API key
-        st.session_state[model_key]["connection_timeout"] = st.number_input(
-            "Connection Timeout (seconds)",
-            value=int(
-                st.session_state[model_key].get(
-                    "connection_timeout",
-                    os.environ.get("TYPESENSE_CONNECTION_TIMEOUT_SECONDS", "2"),
-                )
-            ),
-            min_value=0,
-        )
-        st.session_state[model_key]["collection_name"] = st.text_input(
-            "Collection Name",
-            value=st.session_state[model_key].get("collection_name", ""),
-        )
+        # add app main controls
+        app_controls(agent_id, action_id)
 
     # Add update button to apply changes
     app_update_action(agent_id, action_id)
 
     with st.expander("Purge Collection", False):
-
         if st.button("Delete all documents", key=f"{model_key}_btn_delete_collection"):
             # Call the function to purge
             if result := call_action_walker_exec(
@@ -149,6 +196,9 @@ def render(router: StreamlitRouter, agent_id: str, action_id: str, info: dict) -
         )
     else:
         st.error("Unable to list documents")
+
+
+# Additional function definitions remain unchanged
 
 
 def render_paginated_documents(

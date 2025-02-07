@@ -1,4 +1,6 @@
 import:py os;
+import:py json;
+import:py yaml;
 import:py schedule;
 import:py logging;
 import:py traceback;
@@ -97,6 +99,41 @@ node TypesenseVectorStoreAction :VectorStoreAction: {
         return collection;
     }
 
+    can add_embeddings(knodes:list[Document], ) {
+
+        importing_error_message = "";
+        try {
+
+            # Try to parse the content as JSON
+            try {
+                data = json.loads(knodes);
+            } except json.JSONDecodeError as e {
+                importing_error_message = f"Failed to import knode JSON, {e}";
+            }
+
+            # Try to parse the content as YAML
+            try {
+                data = yaml.safe_load(knodes);
+            } except yaml.YAMLError as e {
+                importing_error_message = f"Failed to import knode YAML, {e}";
+            }
+
+
+            if(client := self.get_client()) {
+                for doc in data{
+                    client.collections[self.collection_name].documents.create(doc);
+                }
+            }
+
+            return True;
+        } except Exception as e {
+            self.logger.error(f"an exception occurred, {e}");
+            self.logger.error(importing_error_message);
+            return False;
+        }
+    }
+
+
     can get_vectorstore() {
         # """
         # Initializes and returns a Typesense vectorstore reference using client
@@ -109,14 +146,20 @@ node TypesenseVectorStoreAction :VectorStoreAction: {
         # """
         try {
 
-            if not all([self.openai_api_key, self.collection_name]) {
-                raise ValueError("One or more required variables are missing.");
+            embedding = self.get_embedding_model();
+
+            if not embedding {
+                raise ValueError("Embedding model not found.");
             }
 
-            # set the openai api key for embeddings via langchain
-            os.environ["OPENAI_API_KEY"] = self.openai_api_key;
-            # set up the embedding resource and vectorstore
-            embedding = OpenAIEmbeddings();
+            if not self.collection_name {
+                raise ValueError("Collection name not set.");
+            }
+
+            # # set the openai api key for embeddings via langchain
+            # os.environ["OPENAI_API_KEY"] = self.openai_api_key;
+            # # set up the embedding resource and vectorstore
+            # embedding = OpenAIEmbeddings();
 
             if(client := self.get_client()) {
                 return Typesense(

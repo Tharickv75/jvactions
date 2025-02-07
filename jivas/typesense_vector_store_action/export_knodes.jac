@@ -7,10 +7,10 @@ import:jac from agent.action.actions { Actions }
 import:jac from agent.action.interact_graph_walker { interact_graph_walker }
 
 
-walker import_knodes :interact_graph_walker: {
-    has data:list = [];
-    has response:bool = False;
+walker export_knodes :interact_graph_walker: {
+    has export_json:bool = False;
     has embeddings:bool = False;
+    has response:str = "";
 
     # set up logger
     static has logger:Logger = logging.getLogger(__name__);
@@ -24,11 +24,7 @@ walker import_knodes :interact_graph_walker: {
     }
 
     can on_action with Action entry {
-        if(self.embeddings){
-            self.response = here.add_embeddings(self.data);
-        }else{
-            self.response = here.import_knodes(self.data);
-        }
+        self.response = here.export_knodes(self.export_json, self.embeddings);
     }
 
 }
