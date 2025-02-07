@@ -1,0 +1,25 @@
+published: true
+name: Eldon AI
+description: An AI representation of Eldon Marks.
+actions:
+- action: jivas/typesense_retrieval_interact_action
+  context:
+    version: 0.0.1
+    enabled: true
+    score_threshold: 0.2
+- action: jivas/persona_interact_action
+  context:
+    version: 0.0.1
+    enabled: true
+- action: jivas/langchain_model_action
+  context:
+    version: 0.0.1
+    enabled: true
+    model_name: gpt-4o
+    api_key: ""
+- action: jivas/typesense_vector_store_action
+  context:
+    version: 0.0.1
+    enabled: true
+    embedding_model_api_key: ""
+    embedding_model_provider: openai
